@@ -1,0 +1,11 @@
+GAPS-main/
+__pycache__/
+all_gen_gt_classes/
+android_platforms_stub/
+androlog_config/
+apks/
+extraction.log
+gaps_output/
+instrumented_apks/
+output/
+selected_67_apps.txt
