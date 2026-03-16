@@ -145,7 +145,7 @@ while read -r stem; do
   instrumented_apk_path="$ROOT_DIR/instrumented_apks/${stem}_app-release.apk"
   instructions_path="$GAPS_OUTPUT_DIR/${stem}_app-release/${stem}_app-release-instr.json"
   static_args=(static -i "$instrumented_apk_path" -seed "$ROOT_DIR/$methods_path" -o "$GAPS_OUTPUT_DIR" -l "$GAPS_PATH_LIMIT")
-  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR" -frida)
+  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR")
 
   if [ "$GAPS_USE_CONDITIONAL" = "1" ]; then
     static_args+=(-cond)
