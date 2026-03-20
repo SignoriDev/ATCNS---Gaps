@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$ROOT_DIR"
 
-APK_LIMIT=${APK_LIMIT:-67}
+APK_LIMIT=${APK_LIMIT:-10}
 WORKERS=${WORKERS:-6}
 ANDROLOG_JAR=${ANDROLOG_JAR:-/home/unknown/Downloads/AndroLog/target/androlog-0.1-jar-with-dependencies.jar}
 ANDROID_JAR=${ANDROID_JAR:-/home/unknown/Android/Sdk/platforms/android-36.1/android.jar}
@@ -137,7 +137,7 @@ selected_count=$(grep -cve '^[[:space:]]*$' selected_67_apps.txt || true)
 [ "$selected_count" -eq "$APK_LIMIT" ] || fail "Expected $APK_LIMIT selected apps, found $selected_count"
 
 log "Instrumenting selected APKs..."
-while read -r stem; do
+while read -r stem <&3; do
   [ -n "$stem" ] || continue
 
   apk_path="apks/${stem}_app-release.apk"
@@ -145,7 +145,7 @@ while read -r stem; do
   instrumented_apk_path="$ROOT_DIR/instrumented_apks/${stem}_app-release.apk"
   instructions_path="$GAPS_OUTPUT_DIR/${stem}_app-release/${stem}_app-release-instr.json"
   static_args=(static -i "$instrumented_apk_path" -seed "$ROOT_DIR/$methods_path" -o "$GAPS_OUTPUT_DIR" -l "$GAPS_PATH_LIMIT")
-  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR")
+  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR" -frida)
 
   if [ "$GAPS_USE_CONDITIONAL" = "1" ]; then
     static_args+=(-cond)
@@ -157,6 +157,11 @@ while read -r stem; do
 
   [ -f "$methods_path" ] || {
     printf '%s\tmissing methods file\n' "$stem" >> instrumented_apks_failures.txt
+    continue
+  }
+
+  [ -s "$methods_path" ] || {
+    printf '%s\tempty methods file\n' "$stem" >> instrumented_apks_failures.txt
     continue
   }
 
@@ -202,7 +207,7 @@ while read -r stem; do
   fi
 
   uninstall_app "$instrumented_apk_path"
-done < selected_67_apps.txt
+done 3< selected_67_apps.txt
 
 if [ -s instrumented_apks_failures.txt ]; then
   fail "Instrumentation completed with failures. See $ROOT_DIR/instrumented_apks_failures.txt"
