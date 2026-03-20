@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 APK_LIMIT=${APK_LIMIT:-10}
 WORKERS=${WORKERS:-6}
 ANDROLOG_JAR=${ANDROLOG_JAR:-/home/unknown/Downloads/AndroLog/target/androlog-0.1-jar-with-dependencies.jar}
-ANDROID_JAR=${ANDROID_JAR:-/home/unknown/Android/Sdk/platforms/android-36.1/android.jar}
+ANDROID_JAR=${ANDROID_JAR:-/home/unknown/Android/Sdk/platforms/android-36/android.jar}
 BUILD_TOOLS_DIR=${BUILD_TOOLS_DIR:-/home/unknown/Android/Sdk/build-tools/36.1.0}
 GAPS_DIR=${GAPS_DIR:-$ROOT_DIR/GAPS-main}
 GAPS_BIN=${GAPS_BIN:-$GAPS_DIR/.venv/bin/gaps}
@@ -176,8 +176,8 @@ while read -r stem <&3; do
     -p "$ROOT_DIR/android_platforms_stub" \
     -a "$apk_path" \
     -o "$ROOT_DIR/instrumented_apks" \
-    -l ANDROLOG \
-    -m -mc -n \
+    -l GAPS \
+    -m -n \
     || {
       printf '%s\tandrolog failed\n' "$stem" >> instrumented_apks_failures.txt
       continue
@@ -189,7 +189,7 @@ while read -r stem <&3; do
   }
 
   log "Running GAPS static for $stem"
-  if ! run_gaps "${static_args[@]}"; then
+  if ! run_gaps "${static_args[@]}" < /dev/null; then
     printf '%s\tgaps static failed\n' "$stem" >> gaps_static_failures.txt
     continue
   fi
@@ -200,7 +200,7 @@ while read -r stem <&3; do
   }
 
   log "Running GAPS dynamic for $stem"
-  if ! run_gaps "${dynamic_args[@]}"; then
+  if ! run_gaps "${dynamic_args[@]}" < /dev/null; then
     printf '%s\tgaps dynamic failed\n' "$stem" >> gaps_dynamic_failures.txt
     uninstall_app "$instrumented_apk_path"
     continue
