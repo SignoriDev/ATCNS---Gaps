@@ -1,5 +1,7 @@
 GAPS-main/
 __pycache__/
+.apktool-home
+.tmp_payload_extract
 all_gen_gt_classes/
 android_platforms_stub/
 androlog_config/
@@ -9,3 +11,4 @@ gaps_output/
 instrumented_apks/
 output/
 selected_67_apps.txt
+instrumented_apks_failures.txt
