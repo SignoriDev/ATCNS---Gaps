@@ -172,7 +172,7 @@ while read -r stem <&3; do
   instrumented_apk_path="$ROOT_DIR/instrumented_apks/${stem}_app-release.apk" # where AndroLog will write the instrumented version of the APK
   instructions_path="$GAPS_OUTPUT_DIR/${stem}_app-release/${stem}_app-release-instr.json" # where GAPS static analysis will write its output JSON
   static_args=(static -i "$instrumented_apk_path" -seed "$ROOT_DIR/$methods_path" -o "$GAPS_OUTPUT_DIR" -l "$GAPS_PATH_LIMIT") # args for GAPS static
-  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR" -frida) # args for GAPS dynamic
+  dynamic_args=(run -i "$instrumented_apk_path" -instr "$instructions_path" -o "$GAPS_OUTPUT_DIR") # args for GAPS dynamic
 
   # set conditional flags
   if [ "$GAPS_USE_CONDITIONAL" = "1" ]; then
