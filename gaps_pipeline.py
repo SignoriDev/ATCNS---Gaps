@@ -6,6 +6,8 @@ import argparse
 import os
 from pathlib import Path
 import json
+import shutil
+import subprocess
 
 # Config cache (~/.config/gaps_pipeline/config.json)
 CONFIG_PATH = Path.cwd() / ".gaps_pipeline_config.json"
@@ -263,6 +265,87 @@ def print_config(args):
     print()
     return 0
 
+# Environment validation
+def validate_environment(args: argparse.Namespace, tools: dict[str, Path | None]) -> bool:
+    """
+    Check all prerequisites.
+    Returns True if OK, False if anything failed
+    """
+    errors: list[str] = []
+
+    # commands that must be on PATH
+    for cmd in ("java", "apktool", "adb"):
+        if not shutil.which(cmd):
+            errors.append(f"Command not found on PATH: '{cmd}'")
+    
+    # auto detect tool paths
+    for key, label, kind in (
+        ("android_jar",     "android.jar",      "file"),
+        ("build_tools_dir", "build-tools dir",  "dir"),
+        ("androlog_jar",    "androlog jar",      "file"),
+    ):
+        p = tools.get(key)
+        if p is None:
+            errors.append(
+                f"Could not find {label}. "
+                f"Set the {key.upper()} env var or run --reconfigure."
+            )
+        elif kind == "file" and not p.is_file():
+            errors.append(f"{label} path does not exist: {p}")
+        elif kind == "dir" and not p.is_dir():
+            errors.append(f"{label} path does not exist: {p}")
+
+    # build-tools binaries
+    bt = tools.get("build_tools_dir")
+    if bt and bt.is_dir():
+        for binary in ("apksigner", "zipalign", "aapt"):
+            if not (bt / binary).is_file():
+                errors.append(f"Missing binary in build-tools dir: '{binary}' (looked in {bt})")
+ 
+    # GAPS dir and binary
+    gaps_dir: Path = args.gaps_dir
+    if not gaps_dir.is_dir():
+        errors.append(f"GAPS directory not found: {gaps_dir}")
+    else:
+        gaps_bin = gaps_dir / ".venv" / "bin" / "gaps"
+        if not gaps_bin.is_file():
+            errors.append(f"GAPS binary not found: {gaps_bin}")
+        elif not os.access(gaps_bin, os.X_OK):
+            errors.append(f"GAPS binary is not executable: {gaps_bin}")
+ 
+    # input directories
+    for attr, label in (("apks_dir", "APKs directory"), ("gt_dir", "ground-truth directory")):
+        p: Path = getattr(args, attr)
+        if not p.is_dir():
+            errors.append(f"{label} not found: {p}")
+ 
+    # ADB device reachability
+    try:
+        result = subprocess.run(
+            ["adb", "-s", args.adb_serial, "get-state"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            errors.append(
+                f"ADB device not reachable: {args.adb_serial} "
+                f"(adb get-state exited {result.returncode})"
+            )
+    except FileNotFoundError:
+        pass  # already caught by the PATH check above
+    except subprocess.TimeoutExpired:
+        errors.append(f"ADB device timed out: {args.adb_serial}")
+ 
+    if errors:
+        print("[!] Environment validation failed:")
+        for err in errors:
+            print(f"    • {err}")
+        return False
+ 
+    print("[*] Environment OK.")
+    return True
+
 def main() -> int:
     args = parse_args()
     print_config(args)
@@ -270,6 +353,11 @@ def main() -> int:
     print(f"  android_jar       = {tools['android_jar']}")
     print(f"  build_tools_dir   = {tools['build_tools_dir']}")
     print(f"  androlog_jar      = {tools['androlog_jar']}")
+
+    if not validate_environment(args, tools):
+        return 1
+
+    print("[*] Starting pipeline...")
     return 0
 
 if __name__ == "__main__":
