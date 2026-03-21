@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
         help="Max paths for GAPS static analysis (default: %(default)s).",
     )
     parser.add_argument(
-        "--parser-use-conditional",
+        "--gaps-use-conditional",
         action=argparse.BooleanOptionalAction,
         default=bool(int(os.environ.get("GAPS_USE_CONDITIONAL", 1))),
         help="Pass -cond flag to GAPS static (default: enabled).",
@@ -78,9 +78,27 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def print_config(args):
+    print(f"  apk_limit         = {args.apk_limit}")
+    print(f"  workers           = {args.workers}")
+    print(f"  gaps_dir          = {args.gaps_dir}")
+    print(f"  gaps_output_dir   = {args.gaps_output_dir}")
+    print(f"  gaps_path_limit   = {args.gaps_path_limit}")
+    print(f"  gaps_use_cond     = {args.gaps_use_conditional}")
+    print(f"  gaps_manual_setup = {args.gaps_manual_setup}")
+    print(f"  adb_serial        = {args.adb_serial}")
+    print(f"  apks_dir          = {args.apks_dir}")
+    print(f"  gt_dir            = {args.gt_dir}")
+    print()
+    print("  [auto-detected]")
+    #print(f"  android_jar       = {android_jar}")
+    #print(f"  build_tools_dir   = {build_tools_dir}")
+    #print(f"  androlog_jar      = {androlog_jar}")
+    return 0
+
 def main() -> int:
     args = parse_args()
-    print("gaps_pipeline: OK")
+    print_config(args)
     return 0
 
 if __name__ == "__main__":
