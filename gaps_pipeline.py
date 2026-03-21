@@ -346,6 +346,91 @@ def validate_environment(args: argparse.Namespace, tools: dict[str, Path | None]
     print("[*] Environment OK.")
     return True
 
+# Cleanup and setup workspace
+# Directories created fresh on every run
+_WORK_DIRS = (
+    "androlog_config",
+    "instrumented_apks",
+    "android_platforms_stub",
+    "output",
+)
+ 
+# Scratch dirs that are just deleted (not recreated)
+_SCRATCH_DIRS = (
+    ".tmp_payload_extract",
+    ".apktool-home",
+)
+ 
+# Files cleaned up before each run
+_CLEAN_FILES = (
+    "selected_apps.txt",
+    "instrumented_apks_failures.txt",
+    "extract_payload_methods_failures.txt",
+    "gaps_static_failures.txt",
+    "gaps_dynamic_failures.txt",
+)
+
+def setup_workspace(root: Path, args: argparse.Namespace, tools: dict[str, Path | None]) -> None:
+    """
+    Wipe all artifacts from previous runs and create a clean workspace.
+    Also writes androlog_config/config.properties and builds the
+    android_platforms_stub directory tree.
+    """
+    print("[*] Cleaning previous artifacts...")
+ 
+    # remove work dirs and scratch dirs
+    for name in (*_WORK_DIRS, *_SCRATCH_DIRS):
+        p = root / name
+        if p.exists():
+            shutil.rmtree(p)
+ 
+    # remove the GAPS output dir (comes from args, may live outside root)
+    gaps_out: Path = args.gaps_output_dir
+    if gaps_out.exists():
+        shutil.rmtree(gaps_out)
+ 
+    # remove leftover flat files
+    for name in _CLEAN_FILES:
+        p = root / name
+        if p.exists():
+            p.unlink()
+ 
+    # recreate work dirs and gaps output dir
+    for name in _WORK_DIRS:
+        (root / name).mkdir(parents=True)
+    gaps_out.mkdir(parents=True)
+ 
+    # write androlog config
+    bt: Path = tools["build_tools_dir"]
+    config_props = root / "androlog_config" / "config.properties"
+    config_props.write_text(
+        f"apksignerPath={bt / 'apksigner'}\n"
+        f"zipalignPath={bt / 'zipalign'}\n",
+        encoding="utf-8",
+    )
+ 
+    # build android_platforms_stub:
+    # create android-1 … android-N dirs, each with a symlink android.jar
+    # pointing to the real android.jar — this tricks AndroLog into thinking
+    # a full SDK is present for every API level.
+    android_jar: Path = tools["android_jar"]
+    stub_root = root / "android_platforms_stub"
+    api_levels = 36
+    print(f"[*] Building android_platforms_stub (API 1-{api_levels})...")
+    for i in range(1, api_levels + 1):
+        api_dir = stub_root / f"android-{i}"
+        api_dir.mkdir(parents=True)
+        link = api_dir / "android.jar"
+        # on Windows os.symlink needs privilege; use a copy as fallback
+        try:
+            link.symlink_to(android_jar)
+        except (OSError, NotImplementedError):
+            import shutil as _shutil
+            _shutil.copy2(android_jar, link)
+ 
+    print("[*] Workspace ready.")
+ 
+
 def main() -> int:
     args = parse_args()
     print_config(args)
@@ -356,6 +441,9 @@ def main() -> int:
 
     if not validate_environment(args, tools):
         return 1
+
+    root = Path(__file__).parent.resolve()
+    setup_workspace(root, args, tools)
 
     print("[*] Starting pipeline...")
     return 0
