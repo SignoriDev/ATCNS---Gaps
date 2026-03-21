@@ -164,7 +164,7 @@ log "Instrumenting selected APKs..."
 # reads from file descriptor 3 just in case commands inside the loop might read from stdin and I don't want accidentally consume lines
 # from the file
 # the file is connected to descriptor 3 at the bottom of the loop
-while read -r stem <&3; do
+while read -r stem; do
   [ -n "$stem" ] || continue # skip empty lines just in case
 
   apk_path="apks/${stem}_app-release.apk" # APKs folder
@@ -242,7 +242,7 @@ while read -r stem <&3; do
   fi
   # uninstall app from device
   uninstall_app "$instrumented_apk_path"
-done 3< selected_67_apps.txt
+done < selected_67_apps.txt
 
 # error exit
 if [ -s instrumented_apks_failures.txt ]; then
