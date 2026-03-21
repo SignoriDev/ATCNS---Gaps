@@ -12,3 +12,4 @@ instrumented_apks/
 output/
 selected_67_apps.txt
 instrumented_apks_failures.txt
+.gaps_pipeline_config.json
