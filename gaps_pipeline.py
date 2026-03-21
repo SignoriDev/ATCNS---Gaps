@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Config cache (~/.config/gaps_pipeline/config.json)
 CONFIG_PATH = Path.cwd() / ".gaps_pipeline_config.json"
@@ -430,6 +431,96 @@ def setup_workspace(root: Path, args: argparse.Namespace, tools: dict[str, Path 
  
     print("[*] Workspace ready.")
  
+# Payload method extraction
+# Import lazily inside the function so the module is only required at runtime, not at import time
+ 
+def run_extraction(root: Path, args: argparse.Namespace) -> bool:
+    """
+    Collect APK/GT pairs, run payload method extraction in parallel, and
+    verify that enough output files were produced.
+ 
+    Returns True on success, False if any extraction failed.
+    """
+    try:
+        import extract_payload_methods as epm
+    except ImportError:
+        print("[!] Cannot import extract_payload_methods — make sure it is in the same directory.")
+        return False
+ 
+    output_dir  = root / "output"
+    temp_root   = root / ".tmp_payload_extract"
+    framework_dir = root / ".apktool-home"
+ 
+    temp_root.mkdir(parents=True, exist_ok=True)
+    framework_dir.mkdir(parents=True, exist_ok=True)
+ 
+    print("[*] Collecting APK / ground-truth pairs...")
+    try:
+        pairs = epm.collect_pairs(args.apks_dir, args.gt_dir)
+    except SystemExit as exc:
+        print(f"[!] {exc}")
+        return False
+ 
+    # filter out already-processed apps (no --overwrite behaviour: always overwrite on pipeline run)
+    # shuffle for variety, then cap to apk_limit
+    import random
+    random.shuffle(pairs)
+    pairs = pairs[: args.apk_limit]
+ 
+    if not pairs:
+        print("[!] No APK/GT pairs found to process.")
+        return False
+ 
+    print(f"[*] Extracting payload methods for {len(pairs)} apps ({args.workers} workers)...")
+ 
+    failures_file = root / "extract_payload_methods_failures.txt"
+    failures: list[tuple[str, str]] = []
+    total_targets = 0
+    total_found   = 0
+    completed: set[str] = set()
+ 
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        future_map = {
+            executor.submit(
+                epm.process_one,
+                root,
+                framework_dir,
+                temp_root,
+                output_dir,
+                stem,
+                apk_path,
+                gt_path,
+            ): stem
+            for stem, apk_path, gt_path in pairs
+        }
+        for future in as_completed(future_map):
+            stem = future_map[future]
+            try:
+                stem, target_count, found_count = future.result()
+                completed.add(stem)
+                total_targets += target_count
+                total_found   += found_count
+                print(f"    {stem}: matched {found_count}/{target_count} classes")
+            except Exception as exc:  # noqa: BLE001
+                failures.append((stem, str(exc)))
+                print(f"    {stem}: FAILED: {exc}")
+ 
+    # check for missing output files
+    for stem, _, _ in pairs:
+        out = epm.output_path_for(output_dir, stem)
+        if stem not in completed or not out.is_file():
+            failures.append((stem, "missing output file"))
+ 
+    if failures:
+        failures_file.write_text(
+            "".join(f"{s}\t{m}\n" for s, m in failures), encoding="utf-8"
+        )
+        print(f"[!] Extraction completed with {len(failures)} failure(s). See {failures_file}")
+        return False
+ 
+    print(f"[*] Extraction complete: matched {total_found}/{total_targets} payload classes across {len(pairs)} apps.")
+    return True
+ 
 
 def main() -> int:
     args = parse_args()
@@ -446,6 +537,9 @@ def main() -> int:
     setup_workspace(root, args, tools)
 
     print("[*] Starting pipeline...")
+
+    if not run_extraction(root, args):
+        return 1
     return 0
 
 if __name__ == "__main__":
