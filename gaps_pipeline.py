@@ -411,7 +411,7 @@ def setup_workspace(root: Path, args: argparse.Namespace, tools: dict[str, Path 
     )
  
     # build android_platforms_stub:
-    # create android-1 … android-N dirs, each with a symlink android.jar
+    # create android-1 ... android-N dirs, each with a symlink android.jar
     # pointing to the real android.jar — this tricks AndroLog into thinking
     # a full SDK is present for every API level.
     android_jar: Path = tools["android_jar"]
@@ -432,52 +432,70 @@ def setup_workspace(root: Path, args: argparse.Namespace, tools: dict[str, Path 
  
 # Payload method extraction
 # Import lazily inside the function so the module is only required at runtime, not at import time
- 
-def run_extraction(root: Path, args: argparse.Namespace) -> bool:
+def run_extraction(root: Path, args: argparse.Namespace) -> list[str] | None:
     """
-    Collect APK/GT pairs, run payload method extraction in parallel, and
-    verify that enough output files were produced.
- 
-    Returns True on success, False if any extraction failed.
+    Collect APK/GT pairs, randomly select apk_limit of them,
+    run payload method extraction in parallel, and write selected_apps.txt.
+
+    Returns the list of selected stems on success, None on failure.
     """
+    import random
+    import sys
+
+    script_dir = str(Path(__file__).parent.resolve())
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
     try:
         import extract_payload_methods as epm
     except ImportError:
-        print("[!] Cannot import extract_payload_methods — make sure it is in the same directory.")
-        return False
- 
-    output_dir  = root / "output"
-    temp_root   = root / ".tmp_payload_extract"
+        print(
+            "[!] Cannot import extract_payload_methods — "
+            "make sure it is in the same directory as gaps_pipeline.py."
+        )
+        return None
+
+    output_dir    = root / "output"
+    temp_root     = root / ".tmp_payload_extract"
     framework_dir = root / ".apktool-home"
- 
+
     temp_root.mkdir(parents=True, exist_ok=True)
     framework_dir.mkdir(parents=True, exist_ok=True)
- 
+
+    # Collect all available APK / ground-truth pairs
     print("[*] Collecting APK / ground-truth pairs...")
     try:
         pairs = epm.collect_pairs(args.apks_dir, args.gt_dir)
     except SystemExit as exc:
         print(f"[!] {exc}")
-        return False
- 
-    # filter out already-processed apps (no --overwrite behaviour: always overwrite on pipeline run)
-    # shuffle for variety, then cap to apk_limit
-    import random
-    random.shuffle(pairs)
-    pairs = pairs[: args.apk_limit]
- 
+        return None
+
     if not pairs:
         print("[!] No APK/GT pairs found to process.")
-        return False
- 
-    print(f"[*] Extracting payload methods for {len(pairs)} apps ({args.workers} workers)...")
- 
+        return None
+
+    # Randomly select apk_limit pairs before doing any extraction
+    if len(pairs) < args.apk_limit:
+        print(
+            f"[!] Not enough APK/GT pairs: "
+            f"need {args.apk_limit}, have {len(pairs)}."
+        )
+        return None
+
+    random.shuffle(pairs)
+    pairs = pairs[: args.apk_limit]
+
+    print(
+        f"[*] Extracting payload methods for {len(pairs)} apps "
+        f"({args.workers} workers)..."
+    )
+
+    # Run extraction in parallel
     failures_file = root / "extract_payload_methods_failures.txt"
     failures: list[tuple[str, str]] = []
     total_targets = 0
     total_found   = 0
     completed: set[str] = set()
- 
+
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_map = {
             executor.submit(
@@ -503,22 +521,46 @@ def run_extraction(root: Path, args: argparse.Namespace) -> bool:
             except Exception as exc:  # noqa: BLE001
                 failures.append((stem, str(exc)))
                 print(f"    {stem}: FAILED: {exc}")
- 
-    # check for missing output files
+
+    # Check for missing output files
     for stem, _, _ in pairs:
         out = epm.output_path_for(output_dir, stem)
         if stem not in completed or not out.is_file():
-            failures.append((stem, "missing output file"))
- 
+            if stem not in {s for s, _ in failures}:
+                failures.append((stem, "missing output file"))
+
     if failures:
         failures_file.write_text(
             "".join(f"{s}\t{m}\n" for s, m in failures), encoding="utf-8"
         )
-        print(f"[!] Extraction completed with {len(failures)} failure(s). See {failures_file}")
-        return False
- 
-    print(f"[*] Extraction complete: matched {total_found}/{total_targets} payload classes across {len(pairs)} apps.")
-    return True
+        print(
+            f"[!] Extraction completed with {len(failures)} failure(s). "
+            f"See {failures_file}"
+        )
+        return None
+
+    print(
+        f"[*] Extraction complete: matched {total_found}/{total_targets} "
+        f"payload classes across {len(pairs)} apps."
+    )
+
+    # Build final list — keep only stems with non-empty output files
+    candidates = [
+        stem
+        for stem in sorted(completed)
+        if (out := epm.output_path_for(output_dir, stem)).is_file()
+        and out.stat().st_size > 0
+    ]
+
+    if not candidates:
+        print("[!] All output files are empty.")
+        return None
+
+    selected_file = root / "selected_apps.txt"
+    selected_file.write_text("\n".join(candidates) + "\n", encoding="utf-8")
+    print(f"[*] Selected {len(candidates)} apps -> {selected_file.name}")
+
+    return candidates
  
 
 def main() -> int:
@@ -537,8 +579,10 @@ def main() -> int:
 
     print("[*] Starting pipeline...")
 
-    if not run_extraction(root, args):
+    selected = run_extraction(root, args)
+    if selected is None:
         return 1
+    
     return 0
 
 if __name__ == "__main__":
