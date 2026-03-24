@@ -562,6 +562,164 @@ def run_extraction(root: Path, args: argparse.Namespace) -> list[str] | None:
 
     return candidates
  
+ # Instrumentation + GAPS static/dynamic loop
+
+def _uninstall_app(adb_serial: str, apk_path: Path) -> None:
+    try:
+        # get package name from aapt
+        result= subprocess.run(
+            ["aapt", "dump", "badging", str(apk_path)],
+            capture_output=True, text=True,
+        )
+        package = None
+        for token in result.stdout.split():
+            if token.startswith("name="):
+                package = token.split("=", 1)[1].strip("'")
+                break
+        if package:
+            subprocess.run(
+                ["adb", "-s", adb_serial, "uninstall", package],
+                capture_output=True,
+            )
+    except Exception:
+        pass
+
+def run_instrumentation_loop(
+        root: Path,
+        args: argparse.Namespace,
+        tools: dict[str, Path | None],
+        selected: list[str],
+) -> bool:
+    """
+    For each selected app stem:
+    1. Instrument the APK with Androlog
+    2. Run GAPS static analysis
+    3. Run GAPS dynamic analysis
+    4. Uninstall the APK from the device
+
+    Failures are logged to separate files and skip the current APK.
+    Returns True if there were zero failures, False otherwise.
+    """
+
+    androlog_jar: Path = tools["androlog_jar"]
+    android_jar: Path = tools["android_jar"]
+    build_tools_jar: Path = tools["build_tools_dir"]
+    gaps_bin = args.gaps_dir / ".venv" / "bin" / "gaps"
+
+    apks_dir = args.apks_dir
+    output_dir = root / "output"
+    instrumented_dir = root / "instrumented_apks"
+    androlog_cfg_dir = root / "androlog_config"
+    platforms_stub = root / "android_platforms_stub"
+    gaps_output_dir = args.gaps_output_dir
+
+    instr_failures_file = root / "instrumented_apks_failures.txt"
+    gaps_static_failures_file = root / "gaps_static_failures.txt"
+    gaps_dynamic_failures_file = root / "gaps_dynamic_failures.txt"
+
+    instr_failures: list[tuple[str, str]] = []
+    gaps_static_failures: list[tuple[str, str]] = []
+    gaps_dynamic_failures: list[tuple[str, str]] = []
+
+    total = len(selected)
+    for idx, stem in enumerate(selected, 1):
+        print(f"[*] [{idx}/{total}] {stem}")
+
+        apk_path = apks_dir / f"{stem}_app-release.apk"
+        methods_path = output_dir / f"{stem}_methods.smali"
+        instrumented_apk = instrumented_dir / f"{stem}_app-release.apk"
+        instructions_path = (
+            gaps_output_dir / f"{stem}_app-release" / f"{stem}_app-release-instr.json"
+        )
+
+        # source files must exist
+        if not methods_path.is_file():
+            instr_failures.append((stem, "missing methods file"))
+            continue
+        if methods_path.stat().st_size == 0:
+            instr_failures.append((stem, "empty methods file"))
+            continue
+        if not apk_path.is_file():
+            instr_failures.append((stem, "missing apk file"))
+            continue
+
+        # step 1 - Androlog instrumentation
+        androlog_cp = f"{androlog_cfg_dir}{os.pathsep}{androlog_jar}"
+        androlog_cmd = [
+            "java",
+            "-cp", androlog_cp,
+            "com.jordansamhi.androlog.Main",
+            "-p", str(platforms_stub),
+            "-a", str(apk_path),
+            "-o", str(instrumented_dir),
+            "-l", "GAPS",
+            "-m", "-n",
+        ]
+        result = subprocess.run(androlog_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            instr_failures.append((stem, "androlog_failed"))
+            continue
+        if not instrumented_apk.is_file():
+            instr_failures.append((stem, "instrumented apk missing after androlog"))
+            continue
+
+        # step 2 - GAPS static 
+        static_cmd = [
+            str(gaps_bin), "static",
+            "-i", str(instrumented_apk),
+            "-seed", str(methods_path),
+            "-o", str(gaps_output_dir),
+            "-l", str(args.gaps_path_limit),
+        ]
+        if args.gaps_use_conditional:
+            static_cmd.append("-cond")
+
+        result = subprocess.run(static_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            gaps_static_failures.append((stem, "gaps static failed"))
+            continue
+        if not instructions_path.is_file():
+            gaps_static_failures.append((stem, "missing instructions file"))
+            continue
+
+        # step 3 - GAPS dynamic
+        dynamic_cmd = [
+            str(gaps_bin), "run",
+            "-i", str(instrumented_apk),
+            "-instr", str(instructions_path),
+            "-o", str(gaps_output_dir),
+        ]
+        if args.gaps_manual_setup:
+            dynamic_cmd.append("-ms")
+
+        result = subprocess.run(dynamic_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            gaps_dynamic_failures.append((stem, "gaps dynamic failed"))
+            _uninstall_app(args.adb_serial, instrumented_apk)
+            continue
+
+        # step 4 - uninstall app
+        _uninstall_app(args.adb_serial, instrumented_apk)
+    
+    # write failure_files
+    def _write_failures(path: Path, items: list[tuple[str, str]]) -> None:
+        if items:
+            path.write_text("".join(f"{s}\t{m}\n" for s, m in items), encoding="utf-8")
+    
+    _write_failures(instr_failures_file, instr_failures)
+    _write_failures(gaps_static_failures_file, gaps_static_failures)
+    _write_failures(gaps_dynamic_failures_file, gaps_dynamic_failures)
+
+    all_ok = not any([instr_failures, gaps_static_failures, gaps_dynamic_failures])
+
+    if instr_failures:
+        print(f"[!] Instrumentation failures: {len(instr_failures)}. See {instr_failures_file.name}")
+    if gaps_static_failures:
+        print(f"[!] GAPS static failures: {len(gaps_static_failures)}. See {gaps_static_failures_file.name}")
+    if gaps_dynamic_failures:
+        print(f"[!] Instrumentation failures: {len(gaps_dynamic_failures)}. See {gaps_dynamic_failures_file.name}")
+    
+    return all_ok
 
 def main() -> int:
     args = parse_args()
@@ -583,6 +741,10 @@ def main() -> int:
     if selected is None:
         return 1
     
+    if not run_instrumentation_loop(root, args, tools, selected):
+        return 1
+
+    print("[*] Pipeline completed successfully.")
     return 0
 
 if __name__ == "__main__":
