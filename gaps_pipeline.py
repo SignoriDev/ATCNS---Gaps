@@ -426,8 +426,7 @@ def setup_workspace(root: Path, args: argparse.Namespace, tools: dict[str, Path 
         try:
             link.symlink_to(android_jar)
         except (OSError, NotImplementedError):
-            import shutil as _shutil
-            _shutil.copy2(android_jar, link)
+            shutil.copy2(android_jar, link)
  
     print("[*] Workspace ready.")
  
