@@ -10,6 +10,6 @@ extraction.log
 gaps_output/
 instrumented_apks/
 output/
-selected_67_apps.txt
+selected*_apps.txt
 instrumented_apks_failures.txt
 .gaps_pipeline_config.json
